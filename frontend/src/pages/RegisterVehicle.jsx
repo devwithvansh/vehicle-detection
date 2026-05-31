@@ -1,5 +1,5 @@
 import { Save, UserPlus, Info, ArrowLeft } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
@@ -7,7 +7,15 @@ import { toast } from '../utils/toast'
 export default function RegisterVehicle() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
-  const initial = useMemo(() => params.get('vehicle_number') || '', [params])
+  
+  const initial = useMemo(() => {
+    let num = params.get('vehicle_number') || ''
+    // Auto-prepend the army arrow if it's not already there (NO SPACE)
+    if (num && !num.startsWith('↑')) {
+      num = '↑' + num.replace(/\s+/g, '')
+    }
+    return num
+  }, [params])
   
   const [form, setForm] = useState({
     vehicle_number: initial,
@@ -18,6 +26,11 @@ export default function RegisterVehicle() {
     remarks: '',
     operator_name: ''
   })
+  
+  useEffect(() => {
+    setForm(prev => ({ ...prev, vehicle_number: initial }))
+  }, [initial])
+
   const [busy, setBusy] = useState(false)
 
   async function submit(event) {
@@ -30,8 +43,7 @@ export default function RegisterVehicle() {
     setBusy(true)
     try {
       await api.post('/vehicles', form)
-      toast('Vehicle registered successfully.')
-      // Instead of just resetting, let's redirect to detection or list
+      toast('Vehicle registered successfully. Entry log created.')
       setTimeout(() => navigate('/camera'), 1000)
     } catch (err) {
       const detail = err.response?.data?.detail || 'Check duplicate vehicle number or required fields.'
@@ -41,8 +53,17 @@ export default function RegisterVehicle() {
     }
   }
 
+  const handleNumberChange = (val) => {
+    // Ensure the arrow remains constant without space
+    let clean = val.replace(/\s+/g, '')
+    if (!clean.startsWith('↑')) {
+      clean = '↑' + clean.replace(/^[^A-Z0-9]*/, '')
+    }
+    setForm({ ...form, vehicle_number: clean })
+  }
+
   const fields = [
-    { key: 'vehicle_number', label: 'Plate Number', placeholder: 'e.g. 21B123456K', icon: 'ID' },
+    { key: 'vehicle_number', label: 'Plate Number (Auto-Arrow)', placeholder: 'e.g. ↑21B123456K', icon: 'ID' },
     { key: 'driver_name', label: 'Driver Name', placeholder: 'Rank & Name' },
     { key: 'unit_name', label: 'Unit / Regiment', placeholder: 'e.g. 15 Rajput' },
     { key: 'vehicle_type', label: 'Vehicle Type', placeholder: 'e.g. Gypsy, Stallion' },
@@ -92,7 +113,7 @@ export default function RegisterVehicle() {
                   className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-moss/50 focus:bg-moss/5 transition-all placeholder:text-white/10 font-medium"
                   value={form[f.key]} 
                   placeholder={f.placeholder}
-                  onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} 
+                  onChange={(e) => f.key === 'vehicle_number' ? handleNumberChange(e.target.value) : setForm({ ...form, [f.key]: e.target.value })} 
                   required={f.key !== 'remarks'}
                 />
               )}

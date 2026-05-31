@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO, StringIO
 
 from sqlalchemy import Date, cast, func
@@ -39,14 +39,33 @@ def create_vehicle_log(
 
 
 def infer_next_movement(db: Session, vehicle_id: int) -> MovementType:
+    """
+    Intelligent movement inference:
+    1. If no previous logs, first movement is ENTRY.
+    2. If previous log was ENTRY, next is EXIT.
+    3. If previous log was EXIT, next is ENTRY.
+    4. Special Case: If the last movement was more than 18 hours ago, 
+       reset and assume the first movement of the new day is ENTRY.
+    """
     latest = (
         db.query(VehicleLog)
         .filter(VehicleLog.vehicle_id == vehicle_id)
         .order_by(VehicleLog.created_at.desc())
         .first()
     )
-    if latest and latest.movement_type == MovementType.entry:
+    
+    if not latest:
+        return MovementType.entry
+        
+    # Reset logic: if last activity was a long time ago (e.g., 18 hours)
+    # assume a new cycle starting with Entry.
+    time_diff = datetime.utcnow() - latest.created_at
+    if time_diff > timedelta(hours=18):
+        return MovementType.entry
+
+    if latest.movement_type == MovementType.entry:
         return MovementType.exit
+        
     return MovementType.entry
 
 
@@ -70,16 +89,16 @@ def active_vehicle_count(db: Session) -> int:
 
 def logs_to_csv(logs: list[VehicleLog]) -> str:
     output = StringIO()
-    output.write("id,vehicle_number,movement_type,entry_time,exit_time,operator,camera,confidence\n")
+    output.write("id,vehicle_number,movement_type,time,operator,camera,confidence\n")
     for log in logs:
+        time_val = log.entry_time if log.movement_type == MovementType.entry else log.exit_time
         output.write(
             ",".join(
                 [
                     str(log.id),
                     log.vehicle.vehicle_number,
                     log.movement_type.value,
-                    str(log.entry_time or ""),
-                    str(log.exit_time or ""),
+                    str(time_val or ""),
                     log.operator.full_name,
                     log.camera.name if log.camera else "",
                     str(log.confidence_score or ""),
@@ -104,9 +123,11 @@ def logs_to_pdf(logs: list[VehicleLog]) -> bytes:
             pdf.showPage()
             pdf.setFont("Helvetica", 8)
             y = height - 48
+        
+        time_val = log.entry_time if log.movement_type == MovementType.entry else log.exit_time
         line = (
-            f"#{log.id} | {log.vehicle.vehicle_number} | {log.movement_type.value} | "
-            f"Entry: {log.entry_time or '-'} | Exit: {log.exit_time or '-'} | "
+            f"#{log.id} | {log.vehicle.vehicle_number} | {log.movement_type.value.upper()} | "
+            f"Time: {time_val or '-'} | "
             f"Operator: {log.operator.full_name} | Camera: {log.camera.name if log.camera else '-'}"
         )
         pdf.drawString(40, y, line[:140])
