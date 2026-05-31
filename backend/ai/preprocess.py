@@ -1,118 +1,51 @@
 from pathlib import Path
-
 import cv2
 import numpy as np
 
-
-def preprocess_plate_image(
-    input_path: str | Path,
-    output_path: str | Path
-) -> str:
-
-    image = cv2.imread(
-        str(input_path)
-    )
-
+def preprocess_plate_image(input_path: str | Path, output_path: str | Path) -> str:
+    """
+    Optimized preprocessing for painted army plates:
+    1. Adaptive cropping (if possible) or just focus on central area.
+    2. CLAHE for contrast enhancement (good for painted numbers).
+    3. Bilateral filter to reduce noise while keeping edges sharp.
+    """
+    image = cv2.imread(str(input_path))
     if image is None:
-        raise ValueError(
-            "Unable to read image"
-        )
+        raise ValueError("Unable to read image")
 
     h, w = image.shape[:2]
+    
+    # Army plates are often on bumpers. The original crop was too aggressive.
+    # Let's use a slightly wider crop or dynamic detection if we had a model, 
+    # but for now, we'll refine the static crop to be more inclusive.
+    crop = image[int(h * 0.3):int(h * 0.8), int(w * 0.1):int(w * 0.9)]
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
 
-    # Focus on bumper center region
-    crop = image[
-        int(h * 0.49):int(h * 0.67),
-        int(w * 0.22):int(w * 0.62)
-    ]
+    # 1. Contrast Enhancement using CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    # This is excellent for painted numbers which might have low contrast with the background.
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
 
-    gray = cv2.cvtColor(
-        crop,
-        cv2.COLOR_BGR2GRAY
+    # 2. Denoising while preserving edges
+    denoised = cv2.bilateralFilter(enhanced, 9, 75, 75)
+
+    # 3. Sharpening
+    kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+    sharpened = cv2.filter2D(denoised, -1, kernel)
+
+    # 4. Thresholding (Adaptive is usually better for varying lighting)
+    thresh = cv2.adaptiveThreshold(
+        sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
     )
 
-    gray = cv2.bilateralFilter(
-        gray,
-        5,
-        50,
-        50
-    )
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    gray = cv2.convertScaleAbs(
-        gray,
-        alpha=1.8,
-        beta=25
-    )
-
-    gray = cv2.GaussianBlur(
-        gray,
-        (3, 3),
-        0
-    )
-
-    output_path = Path(
-        output_path
-    )
-
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    debug_dir = (
-        output_path.parent
-        / "debug"
-    )
-
-    debug_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    cv2.imwrite(
-        str(debug_dir / "crop.jpg"),
-        crop
-    )
-
-    cv2.imwrite(
-        str(debug_dir / "gray.jpg"),
-        gray
-    )
-
-    resized = cv2.resize(
-        gray,
-        None,
-        fx=5,
-        fy=5,
-        interpolation=cv2.INTER_CUBIC
-    )
-
-    _, thresh = cv2.threshold(
-        resized,
-        0,
-        255,
-        cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )
-
-    kernel = np.ones(
-        (2, 2),
-        np.uint8
-    )
-
-    processed = cv2.morphologyEx(
-        thresh,
-        cv2.MORPH_CLOSE,
-        kernel
-    )
-
-    cv2.imwrite(
-        str(debug_dir / "processed.jpg"),
-        processed
-    )
-
-    cv2.imwrite(
-        str(output_path),
-        processed
-    )
+    # Save the processed image
+    # We save the 'enhanced' or 'sharpened' version for OCR as EasyOCR 
+    # often performs better on grayscale than on hard binary thresholds.
+    cv2.imwrite(str(output_path), sharpened)
 
     return str(output_path)
