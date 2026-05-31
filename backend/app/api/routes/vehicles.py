@@ -25,11 +25,11 @@ def list_vehicles(
 def register_vehicle(
     payload: VehicleCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     if get_vehicle_by_number(db, payload.vehicle_number):
         raise HTTPException(status_code=409, detail="Vehicle already registered")
-    return create_vehicle(db, payload)
+    return create_vehicle(db, payload, operator_id=current_user.id)
 
 
 @router.get("/{vehicle_number}", response_model=VehicleRead)
